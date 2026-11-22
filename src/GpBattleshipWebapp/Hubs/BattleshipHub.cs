@@ -206,6 +206,7 @@ public class BattleshipHub : Hub
                 var parts = k.Split(',');
                 return new ShotDto { X = int.Parse(parts[0]), Y = int.Parse(parts[1]), Hit = player.HitsOnOpponent.Contains(k) };
             }).ToList(),
+            SunkShips = player.SunkShips,
         };
 
         await NotifyLobbyAndHost(room);
@@ -396,6 +397,7 @@ public class BattleshipHub : Hub
         // Require that this shot's cell belongs to the ship AND all its cells are hit,
         // so already-sunk ships are never re-announced on later hits.
         string? sunkShip = null;
+        List<Cell>? sunkCells = null;
         if (hit && opponent.Ships != null)
         {
             foreach (var ship in opponent.Ships)
@@ -405,6 +407,9 @@ public class BattleshipHub : Hub
                 if (thisShipHit && fullyHit)
                 {
                     sunkShip = ship.Name;
+                    sunkCells = ship.Cells;
+                    // Remember it so a reconnecting client can re-draw the sunk marker.
+                    player.SunkShips.Add(new SunkShip { Name = ship.Name, Cells = ship.Cells });
                     break;
                 }
             }
@@ -413,8 +418,11 @@ public class BattleshipHub : Hub
         bool opponentDefeated = opponent.ShipCells.Count > 0 &&
                                 opponent.ShipCells.All(c => player.ShotsAtOpponent.Contains($"{c.Item1},{c.Item2}"));
 
+        // sunkCells are the exact cells of the ship that just sank (enemy board),
+        // so the shooter can paint the whole hull as sunk — the client doesn't
+        // otherwise know the enemy layout.
         await Clients.Group(room.Code).SendAsync("ShotResult",
-            Context.ConnectionId, x, y, hit, sunkShip, opponentDefeated);
+            Context.ConnectionId, x, y, hit, sunkShip, opponentDefeated, sunkCells);
 
         if (opponentDefeated)
         {
@@ -630,6 +638,8 @@ public class BattleshipHub : Hub
         public HashSet<(int, int)> ShipCells { get; set; } = new();
         public HashSet<string> ShotsAtOpponent { get; set; } = new();
         public HashSet<string> HitsOnOpponent { get; set; } = new();
+        /// <summary>Enemy ships this player has finished off (for redrawing sunk markers on reconnect).</summary>
+        public List<SunkShip> SunkShips { get; set; } = new();
 
         public Player(string connectionId) => ConnectionId = connectionId;
 
@@ -640,6 +650,7 @@ public class BattleshipHub : Hub
             ShipCells = new();
             ShotsAtOpponent = new();
             HitsOnOpponent = new();
+            SunkShips = new();
         }
     }
 
@@ -662,6 +673,13 @@ public class BattleshipHub : Hub
         public bool Hit { get; set; }
     }
 
+    /// <summary>An enemy ship a player has sunk: its name and the cells it occupied.</summary>
+    public class SunkShip
+    {
+        public string Name { get; set; } = "";
+        public List<Cell> Cells { get; set; } = new();
+    }
+
     public class ReconnectState
     {
         public string PlayerId { get; set; } = "";
@@ -672,5 +690,6 @@ public class BattleshipHub : Hub
         public string? CurrentTurnId { get; set; }
         public List<ShipPlacement> Ships { get; set; } = new();
         public List<ShotDto> MyShots { get; set; } = new();
+        public List<SunkShip> SunkShips { get; set; } = new();
     }
 }

@@ -21,6 +21,8 @@
   const feed = document.getElementById('feed');
   const toastEl = document.getElementById('toast');
   const muteBtn = document.getElementById('muteBtn');
+  const turnPill = document.getElementById('turnPill');
+  const turnPillText = turnPill ? turnPill.querySelector('.turn-pill-text') : null;
 
   // ----- State -----
   const params = new URLSearchParams(location.search);
@@ -74,6 +76,7 @@
     const pretty = mm > 0 ? `${mm}:${ss}` : `${s}s`;
     turnBanner.textContent = `⏸ ${pausedName} disconnected — ${pretty} to reconnect…`;
     turnBanner.className = 'banner wait';
+    setTurnPill('paused', `⏸ ${pausedName} disconnected — ${pretty}`);
   }
 
   // ----- Helpers -----
@@ -101,10 +104,12 @@
     toast(reason);
     turnBanner.textContent = reason;
     turnBanner.className = 'banner wait';
+    setTurnPill('over', reason);
     log(reason);
     if (enemyGrid) enemyGrid.classList.add('disabled');
     // The seat is gone; clear the saved token so a reload doesn't try to reconnect.
     localStorage.removeItem(tokenKey);
+    document.title = 'Battleship — game over';
   }
 
   // Floating combat text near a grid cell.
@@ -204,7 +209,7 @@
       else log('Game started — opponent fires first.');
     });
 
-    connection.on('ShotResult', (by, x, y, hit, sunk, over) => {
+    connection.on('ShotResult', (by, x, y, hit, sunk, over, sunkCells) => {
       if (by === myId) {
         enemyShots[key(x, y)] = hit ? 'hit' : 'miss';
         animateShot(enemyGrid, x, y, hit);
@@ -215,7 +220,10 @@
           SFX.play('miss');
           floatText(enemyGrid, x, y, 'MISS', '#cbd5e1');
         }
-        log(`${hit ? '💥 HIT' : '💦 miss'} at ${cellName(x, y)}${sunk ? ' — you sunk their ' + sunk : ''}`);
+        // When a ship sinks, paint its whole hull on the enemy board (we get the
+        // exact cells from the server — the client doesn't know the enemy layout).
+        if (sunk && sunkCells) markSunkShip(enemyGrid, sunkCells);
+        log(`${hit ? '💥 HIT' : '💦 miss'} at ${cellName(x, y)}${sunk ? ' — you sunk their ' + sunk + '!' : ''}`);
       } else {
         animateShot(ownGrid, x, y, hit, /*incoming*/ true);
         if (hit) {
@@ -246,8 +254,10 @@
       const win = winner === myId;
       turnBanner.textContent = win ? '🏆 You sank the enemy fleet — you win!' : '💀 Your fleet was destroyed.';
       turnBanner.className = 'banner ' + (win ? 'win' : 'wait');
+      setTurnPill('over', win ? '🏆 You win!' : '💀 You lose');
       SFX.play(win ? 'win' : 'lose');
       log(win ? 'Victory!' : 'Defeat.');
+      document.title = win ? '🏆 You win — Battleship' : '💀 Defeat — Battleship';
     });
 
     connection.on('PauseState', (paused) => {
@@ -257,6 +267,7 @@
         if (!pauseTimer) {
           turnBanner.textContent = '⏸ Paused — opponent reconnecting…';
           turnBanner.className = 'banner wait';
+          setTurnPill('paused', '⏸ Paused — opponent reconnecting…');
         }
       } else {
         clearPauseCountdown();
@@ -272,6 +283,7 @@
       clearPauseCountdown();
       turnBanner.textContent = 'Opponent left the game.';
       turnBanner.className = 'banner wait';
+      setTurnPill('over', 'Opponent left the game');
       log('Opponent left.');
     });
     connection.on('GameClosed', () => handleGameEnd('The host closed the game.'));
@@ -287,6 +299,8 @@
       Object.keys(enemyShots).forEach(k => delete enemyShots[k]);
       battlePanel.classList.add('hidden');
       feed.innerHTML = '';
+      setTurnPill('hidden');
+      document.title = 'Battleship';
       log('New game started — place your fleet again.');
       startPlacement();
       readyBtn.disabled = true;
@@ -308,6 +322,7 @@
     connection.onreconnecting(() => {
       turnBanner.textContent = '🔌 Connection lost — reconnecting…';
       turnBanner.className = 'banner wait';
+      setTurnPill('paused', '🔌 Reconnecting…');
     });
     connection.onreconnected(async () => {
       const token = localStorage.getItem(tokenKey);
@@ -366,6 +381,9 @@
         enemyShots[`${s.x},${s.y}`] = s.hit ? 'hit' : 'miss';
         paintStatic(enemyGrid, s.x, s.y, s.hit ? 'hit' : 'miss', s.hit ? '💥' : '•');
       });
+
+      // Then overlay the sunk-ship hulls (drawn after shots so they win).
+      (state.sunkShips || []).forEach(sh => markSunkShip(enemyGrid, sh.cells));
 
       myTurn = state.currentTurnId === myId;
       updateTurnBanner();
@@ -573,6 +591,20 @@
     if (c) { c.classList.add(cls); c.innerHTML = `<span class="marker">${symbol}</span>`; }
   }
 
+  // Paint a freshly-sunk enemy ship across all its cells: red hatch + skull marker,
+  // and a brief reveal animation. `cells` is [{x,y}] from the server.
+  function markSunkShip(grid, cells) {
+    if (!grid || !cells || !cells.length) return;
+    cells.forEach(({ x, y }) => {
+      const c = grid.querySelector(`[data-x="${x}"][data-y="${y}"]`);
+      if (!c) return;
+      c.classList.remove('hit');
+      c.classList.add('sunk', 'just-sunk');
+      enemyShots[key(x, y)] = 'sunk';
+      c.innerHTML = '<span class="marker sunk-marker">☠</span>';
+    });
+  }
+
   // Animated shot marker + splash/explosion.
   function animateShot(grid, x, y, hit, incoming) {
     const c = grid.querySelector(`[data-x="${x}"][data-y="${y}"]`);
@@ -613,17 +645,33 @@
     }
   }
 
+  // Floating turn indicator, fixed to the bottom of the screen so it's always
+  // visible no matter how far the board is scrolled. `state` is one of:
+  //   'me' | 'them' | 'paused' | 'over' | 'hidden'
+  function setTurnPill(state, text) {
+    if (!turnPill) return;
+    turnPill.classList.remove('hidden', 'me', 'them', 'paused', 'over');
+    if (state === 'hidden') { turnPill.classList.add('hidden'); return; }
+    turnPill.classList.add(state);
+    if (turnPillText) turnPillText.textContent = text;
+    document.body.classList.toggle('my-turn', state === 'me');
+  }
+
   function updateTurnBanner() {
-    if (gameOver) return;
+    if (gameOver) { setTurnPill('over', 'Game over'); return; }
     enemyGrid.classList.toggle('disabled', !myTurn);
     if (myTurn) {
       turnBanner.textContent = shootAgainOnHit
         ? '🎯 Your turn — a hit lets you shoot again!'
         : '🎯 Your turn — fire at the enemy!';
       turnBanner.className = 'banner turn';
+      setTurnPill('me', 'YOUR TURN — fire!');
+      document.title = '🎯 Your turn — Battleship';
     } else {
       turnBanner.textContent = '⏳ Waiting for opponent…';
       turnBanner.className = 'banner wait';
+      setTurnPill('them', "Opponent's turn…");
+      document.title = 'Battleship — waiting…';
     }
   }
 

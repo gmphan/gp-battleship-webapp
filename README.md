@@ -421,6 +421,7 @@ HostGames       : ConcurrentDictionary<string, ConcurrentDictionary<string, byte
 | `ShipCells` | `HashSet<(int,int)>` — quick lookup of all occupied cells (for hit tests). |
 | `ShotsAtOpponent` | `HashSet<string>` of `"x,y"` this player has fired. |
 | `HitsOnOpponent` | `HashSet<string>` of `"x,y"` that were hits. |
+| `SunkShips` | `List<SunkShip>` (name + cells) of enemy ships this player finished — sent on reconnect so sunk hulls redraw. |
 | `ResetGame()` | Clears fleet+shots for a rematch, keeps seat identity. |
 
 ### Other DTOs
@@ -483,7 +484,7 @@ These are `connection.on('EventName', ...)` on the client. Group messages go to 
 | `GameStarted` | `currentTurnId` | room group | Switch player to battle screen; build boards. |
 | `LobbyUpdated` | `[{ id, name, ready, connected }]` | room group | Update player chips. |
 | `ShipsPlaced` | — | caller (player) | Ack placement. |
-| `ShotResult` | `byConnectionId, x, y, hit, sunkShipName?, opponentDefeated` | room group | Animate + log the shot. `sunk` is non-null **only** on the shot that finishes a ship. |
+| `ShotResult` | `byConnectionId, x, y, hit, sunkShipName?, opponentDefeated, sunkCells?` | room group | Animate + log the shot. `sunk` is non-null **only** on the shot that finishes a ship; `sunkCells` is that ship's `[{x,y}]` so the shooter can paint the whole enemy hull as sunk (the shooter doesn't know the enemy layout). |
 | `TurnChanged` | `currentTurnId, keepTurn` | room group | Update whose turn it is; `keepTurn` true when a hit granted another shot. |
 | `GameOver` | `winnerConnectionId` | room group | End state / victory effects. |
 | `PauseState` | `bool paused` | room group | Pause banner while an opponent reconnects. |
@@ -556,6 +557,10 @@ All in `player.js` + `site.css`.
 ### Shots
 - `animateShot(grid, x, y, hit, incoming)` adds `hit`/`miss`/`ship-hit`, a splash `impact` overlay, a `marker` emoji (💥 / •), plus screen shake on incoming hits.
 - `paintStatic(...)` is used when restoring shots from a `Reconnected` snapshot.
+- **Sunk enemy ships:** when a ship sinks, the server includes its cells (`sunkCells`) in `ShotResult`; `markSunkShip(grid, cells)` paints each cell `.sunk` (red hatch + ☠) on the enemy board. On reconnect, `restoreState` re-runs it from `state.sunkShips`. (Own ships show `.ship-hit` as usual.)
+
+### Turn indicator (phone-friendly)
+- The top `#turnBanner` is the main message, but it scrolls off on phones. A **fixed `#turnPill`** at the bottom of the viewport always shows whose turn it is (`YOUR TURN` pulsing green vs `Opponent's turn…`), driven by `setTurnPill('me'|'them'|'paused'|'over'|'hidden', text)`. `document.title` also updates. While it's your turn, `body.my-turn` adds a subtle green edge glow. Call `setTurnPill` wherever the turn/pause/end state changes (see `updateTurnBanner`, pause/end handlers).
 
 ### Coordinates (A–J rows, 1–10 columns)
 - `addBoardLabels(gridEl)` wraps the `.grid` in a `.board-frame` and injects `.board-cols` (1–10) and `.board-rows` (A–J) strips + a corner. Idempotent (`data-labeled="1"`). Called once at boot for all three grids.
@@ -696,6 +701,6 @@ Below are the common extension points, end-to-end (server + both clients). **Alw
 
 ---
 
-_Last whole-app review: ships as connected color-coded hulls, A–J/1–10 coordinate labels, multi-game admin console with abort/rematch, per-ship colors. Resilience pass: 30-minute reconnect grace + live pause countdown, and forever-retry client reconnects (fixing idle "timeout"). Fixed "always says sunk" sink-detection bug. **Auth pass:** admin console now requires cookie login; hosts are identified by authenticated username (config or DB admins, `SuperAdmin`/`Admin` roles); SuperAdmins manage DB admins via `/api/admins`; Postgres-backed `admin_users` (EF migrations auto-applied); DI organized via `Injectors/`. **Docs + DX pass:** F5 "Select Environment" picker over `variables.<Env>.env`; DB provisioning steps + `42501` handling (`Database:MigrateOnStartup`/`FailFast`); env-file parsing gotchas; §15.G/H/Z recipes and the "where do I put this?" map._
+_Last whole-app review: ships as connected color-coded hulls, A–J/1–10 coordinate labels, multi-game admin console with abort/rematch, per-ship colors. Resilience pass: 30-minute reconnect grace + live pause countdown, and forever-retry client reconnects (fixing idle "timeout"). Fixed "always says sunk" sink-detection bug. **Auth pass:** admin console now requires cookie login; hosts are identified by authenticated username (config or DB admins, `SuperAdmin`/`Admin` roles); SuperAdmins manage DB admins via `/api/admins`; Postgres-backed `admin_users` (EF migrations auto-applied); DI organized via `Injectors/`. **Docs + DX pass:** F5 "Select Environment" picker over `variables.<Env>.env`; DB provisioning steps + `42501` handling (`Database:MigrateOnStartup`/`FailFast`); env-file parsing gotchas; §15.G/H/Z recipes and the "where do I put this?" map. **UX pass:** sunk enemy ships render their full hull (red hatch + ☠) from the server's `sunkCells` (also restored on reconnect); a fixed bottom turn pill + `document.title` + edge glow keep the turn state visible on phones (the top banner scrolls off)._
 
 > **When you add a feature later**, update this README in the same PR: the §15 recipe you followed, any new config key (§6), new hub method/event (§8/§9), new endpoint (§13), and SQL/DB changes (§7/§15.G). The checklist in §16 ("Build/verify before shipping") is the minimum gate.

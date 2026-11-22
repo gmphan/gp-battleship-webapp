@@ -56,6 +56,12 @@
   </div>
 
   <div id="toast" class="toast"></div>
+  <!-- Always-visible turn indicator (fixed to the bottom of the viewport, so a
+       scrolled board on a phone still shows whose turn it is). -->
+  <div id="turnPill" class="turn-pill hidden">
+    <span class="turn-pill-dot"></span>
+    <span class="turn-pill-text">Waiting…</span>
+  </div>
   <button id="muteBtn" class="mute-btn" title="Toggle sound">🔊</button>
 
   <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>

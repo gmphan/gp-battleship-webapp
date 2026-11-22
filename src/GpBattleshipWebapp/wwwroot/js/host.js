@@ -15,6 +15,33 @@
   let connection = null;
   let publicBaseUrl = '';
 
+  // Stable token so the host's games survive reconnects/reloads (server keys
+  // host-owned rooms by this token, not the ephemeral connection id).
+  // NOTE: crypto.randomUUID() only exists in secure contexts (https/localhost).
+  // Over plain http://LAN_IP it's undefined, so fall back to a safe random id.
+  const HOST_TOKEN_KEY = 'bs_host_token';
+  function randomToken() {
+    if (window.crypto && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID().replace(/-/g, '');
+    }
+    if (window.crypto && crypto.getRandomValues) {
+      const a = new Uint8Array(16);
+      crypto.getRandomValues(a);
+      return Array.from(a, b => b.toString(16).padStart(2, '0')).join('');
+    }
+    return Date.now().toString(16) + Math.random().toString(16).slice(2);
+  }
+  function getHostToken() {
+    try {
+      let t = localStorage.getItem(HOST_TOKEN_KEY);
+      if (!t) { t = randomToken(); localStorage.setItem(HOST_TOKEN_KEY, t); }
+      return t;
+    } catch {
+      return randomToken(); // localStorage blocked → ephemeral token this session
+    }
+  }
+  const hostToken = getHostToken();
+
   // code -> { code, shootAgainOnHit, started, players: [] }
   const games = new Map();
   // code -> { card, ...element refs, feed lines }
@@ -156,7 +183,9 @@
       .withAutomaticReconnect()
       .build();
 
-    connection.on('GameCreated', (code, hostId, spec, shootAgainOnHit) => {
+    connection.on('GameCreated', (code, hostId, spec, shootAgainOnHit, token) => {
+      // Persist the token the server issued (should match ours; keep it in sync).
+      if (token) localStorage.setItem(HOST_TOKEN_KEY, token);
       games.set(code, { code, shootAgainOnHit, started: false, players: [] });
       updateCard(games.get(code));
       cardLog(code, 'Game created — waiting for players.');
@@ -217,10 +246,24 @@
     connection.onreconnecting(() => toast('Reconnecting…'));
     connection.onreconnected(async () => {
       toast('Reconnected.');
-      await connection.invoke('ListGames'); // re-sync dashboard
+      await resumeHost();
     });
 
     await connection.start();
+    // On first connect, resume any rooms this browser previously owned.
+    await resumeHost();
+  }
+
+  // Re-claim ownership of our rooms (re-binds them to the new connection).
+  // Tolerates an older server that lacks ResumeHost — fall back to ListGames
+  // so the dashboard still restores instead of breaking the whole connect.
+  async function resumeHost() {
+    try {
+      await connection.invoke('ResumeHost', hostToken);
+    } catch (err) {
+      console.warn('ResumeHost unavailable, trying ListGames:', err);
+      try { await connection.invoke('ListGames'); } catch { /* ignore */ }
+    }
   }
 
   async function invokeSafe(method, ...args) {
@@ -247,10 +290,16 @@
     createBtn.disabled = true;
     try {
       await ensureConnected();
-      await connection.invoke('CreateGame', hostNameInput.value || 'Host', shootAgainInput.checked);
+      try {
+        await connection.invoke('CreateGame', hostNameInput.value || 'Host', shootAgainInput.checked, hostToken);
+      } catch (err) {
+        // Older server may not accept the 3rd arg → retry with the classic 2-arg form.
+        console.warn('CreateGame(3 args) failed, retrying legacy signature:', err);
+        await connection.invoke('CreateGame', hostNameInput.value || 'Host', shootAgainInput.checked);
+      }
     } catch (err) {
-      console.error(err);
-      toast('Could not create game.');
+      console.error('Could not create game:', err);
+      toast('Could not create game: ' + (err && err.message ? err.message : err));
     } finally {
       createBtn.disabled = false;
     }

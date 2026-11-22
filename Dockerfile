@@ -1,4 +1,7 @@
 # ---- Build stage ----
+# NOTE: This Dockerfile lives at the repo root, but the build context is
+# src/GpBattleshipWebapp (set in docker-compose.yml as `context: ./src/GpBattleshipWebapp`
+# and `dockerfile: ../../Dockerfile`). All COPY paths below are relative to that context.
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
@@ -25,4 +28,3 @@ ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
 
 ENTRYPOINT ["dotnet", "GpBattleshipWebapp.dll"]
-

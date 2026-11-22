@@ -27,7 +27,31 @@ var app = builder.Build();
 
 app.UseForwardedHeaders();
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// Serve mutable app assets (HTML/JS/CSS) with no-cache + revalidation so a new
+// deploy is picked up immediately instead of being served stale from the browser
+// or an intermediate cache (e.g. Cloudflare). Unchanged files still return fast 304s.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        var headers = ctx.Context.Response.Headers;
+        var ext = ctx.File.Name is { } name && name.LastIndexOf('.') is var dot && dot >= 0
+            ? name[(dot + 1)..].ToLowerInvariant()
+            : "";
+        if (ext is "html" or "js" or "css" or "json")
+        {
+            headers.CacheControl = "no-cache, must-revalidate";
+            // Tell Cloudflare not to edge-cache these mutable files.
+            headers["CDN-Cache-Control"] = "no-store";
+            headers["Cloudflare-CDN-Cache-Control"] = "no-store";
+        }
+        else
+        {
+            // Images/fonts are stable; let them be cached for a while.
+            headers.CacheControl = "public, max-age=86400";
+        }
+    }
+});
 
 app.MapGet("/", () => Results.Redirect("/index.html"));
 

@@ -1,0 +1,9 @@
+# Docker ignore rules for the root Dockerfile.
+# Named "Dockerfile.dockerignore" so it is automatically picked up for builds that
+# use ./Dockerfile, even though the build context is ./src/GpBattleshipWebapp
+# (Docker BuildKit feature: <dockerfile-name>.dockerignore lives next to the Dockerfile).
+bin/
+obj/
+Dockerfile
+Dockerfile.dockerignore
+.dockerignore

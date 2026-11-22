@@ -21,11 +21,16 @@ public class BattleshipHub : Hub
     private static readonly ConcurrentDictionary<string, GameRoom> Rooms = new();
     // Player connection -> room code (a player is in at most one room).
     private static readonly ConcurrentDictionary<string, string> ConnectionRooms = new();
-    // Host connection -> set of room codes it owns (a host may own many).
+    // STABLE host token -> set of room codes it owns (a host may own many).
+    // Keyed by token, NOT the ephemeral connection id, so a host survives reconnects.
     private static readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> HostGames = new();
+    // Current host connection -> its stable host token (rebuilt on reconnect).
+    private static readonly ConcurrentDictionary<string, string> ConnectionHostToken = new();
 
     private const int BoardSize = 10;
-    private static readonly TimeSpan ReconnectGrace = TimeSpan.FromMinutes(5);
+    // How long a disconnected player's seat is held before removal. Generous so a
+    // phone that locks / backgrounds / briefly loses signal doesn't end the game.
+    private static readonly TimeSpan ReconnectGrace = TimeSpan.FromMinutes(30);
 
     private static readonly Dictionary<string, int> Fleet = new()
     {
@@ -44,30 +49,66 @@ public class BattleshipHub : Hub
     /// <summary>
     /// Host creates a new room. <paramref name="shootAgainOnHit"/> controls the turn rule.
     /// A host may call this repeatedly to run several games at once.
+    /// <paramref name="hostToken"/> is a stable client-persisted token so the host's
+    /// rooms survive reconnects/reloads (empty on very first use → one is generated).
     /// </summary>
-    public async Task CreateGame(string hostName, bool shootAgainOnHit)
+    public async Task CreateGame(string hostName, bool shootAgainOnHit, string? hostToken = null)
     {
+        var token = string.IsNullOrWhiteSpace(hostToken) ? Guid.NewGuid().ToString("N") : hostToken!;
+
         var code = GenerateRoomCode();
         var room = new GameRoom(code)
         {
             HostConnectionId = Context.ConnectionId,
+            HostToken = token,
             ShootAgainOnHit = shootAgainOnHit
         };
         Rooms[code] = room;
 
-        // Track this room under the host's connection.
-        var owned = HostGames.GetOrAdd(Context.ConnectionId, _ => new ConcurrentDictionary<string, byte>());
+        // Track this room under the host's STABLE token and remember which token
+        // this connection currently represents (so reconnects can re-bind).
+        var owned = HostGames.GetOrAdd(token, _ => new ConcurrentDictionary<string, byte>());
         owned[code] = 0;
+        ConnectionHostToken[Context.ConnectionId] = token;
 
         await Groups.AddToGroupAsync(Context.ConnectionId, code);
-        await Clients.Caller.SendAsync("GameCreated", code, Context.ConnectionId, FleetSpec, shootAgainOnHit);
+        await Clients.Caller.SendAsync("GameCreated", code, Context.ConnectionId, FleetSpec, shootAgainOnHit, token);
+    }
+
+    /// <summary>
+    /// Host re-claims its dashboard after a reconnect/reload by presenting its stable
+    /// token. Re-binds every owned room to the new connection id and re-joins those
+    /// groups, then replies with the list of owned games.
+    /// </summary>
+    public async Task ResumeHost(string hostToken)
+    {
+        if (string.IsNullOrWhiteSpace(hostToken)) { await ListGamesForToken(null); return; }
+
+        ConnectionHostToken[Context.ConnectionId] = hostToken;
+
+        if (HostGames.TryGetValue(hostToken, out var owned))
+        {
+            foreach (var code in owned.Keys)
+            {
+                if (Rooms.TryGetValue(code, out var room))
+                {
+                    // Re-point the room at this (new) connection and rejoin its group.
+                    room.HostConnectionId = Context.ConnectionId;
+                    await Groups.AddToGroupAsync(Context.ConnectionId, code);
+                }
+            }
+        }
+
+        await ListGamesForToken(hostToken);
     }
 
     /// <summary>Returns all games owned by the calling host (for dashboard restore).</summary>
-    public async Task ListGames()
+    public async Task ListGames() => await ListGamesForToken(this.CurrentHostToken());
+
+    private async Task ListGamesForToken(string? token)
     {
         var list = new List<object>();
-        if (HostGames.TryGetValue(Context.ConnectionId, out var owned))
+        if (token != null && HostGames.TryGetValue(token, out var owned))
         {
             foreach (var code in owned.Keys)
             {
@@ -164,6 +205,10 @@ public class BattleshipHub : Hub
 
     // ----- Host controls -----
 
+    /// <summary>The stable host token for the current connection, or null if not a host.</summary>
+    private string? CurrentHostToken() =>
+        ConnectionHostToken.TryGetValue(Context.ConnectionId, out var t) ? t : null;
+
     /// <summary>Host aborts and removes one of their games.</summary>
     public async Task AbortGame(string code)
     {
@@ -190,7 +235,7 @@ public class BattleshipHub : Hub
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, code);
         }
 
-        RemoveFromHostGames(Context.ConnectionId, code);
+        RemoveFromHostGames(room?.HostToken ?? CurrentHostToken(), code);
         await Clients.Caller.SendAsync("GameRemoved", code);
     }
 
@@ -214,15 +259,24 @@ public class BattleshipHub : Hub
         await NotifyLobbyAndHost(room);
     }
 
-    private bool IsHostOf(string code) =>
-        HostGames.TryGetValue(Context.ConnectionId, out var owned) && owned.ContainsKey(code);
-
-    private static void RemoveFromHostGames(string hostConnId, string code)
+    private bool IsHostOf(string code)
     {
-        if (HostGames.TryGetValue(hostConnId, out var owned))
+        if (Rooms.TryGetValue(code, out var room))
+        {
+            // Authoritative: the current connection represents this room's host token.
+            var cur = CurrentHostToken();
+            if (cur != null && room.HostToken == cur) return true;
+        }
+        return false;
+    }
+
+    private static void RemoveFromHostGames(string? hostToken, string code)
+    {
+        if (hostToken == null) return;
+        if (HostGames.TryGetValue(hostToken, out var owned))
         {
             owned.TryRemove(code, out _);
-            if (owned.IsEmpty) HostGames.TryRemove(hostConnId, out _);
+            if (owned.IsEmpty) HostGames.TryRemove(hostToken, out _);
         }
     }
 
@@ -364,15 +418,19 @@ public class BattleshipHub : Hub
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        // 1) Host disconnecting: tear down all rooms this host owned.
-        if (HostGames.TryRemove(Context.ConnectionId, out var owned))
+        // 1) Host disconnecting: do NOT tear the rooms down. The host owns its rooms
+        //    via a stable token; it can resume them with ResumeHost() after a
+        //    reconnect/reload. We only drop the ephemeral connection→token mapping
+        //    here so a fresh connection can re-bind its token.
+        if (ConnectionHostToken.TryRemove(Context.ConnectionId, out var hostToken))
         {
-            foreach (var code in owned.Keys)
+            // Mark owned rooms as having no live host connection (players keep playing;
+            // host updates will resume once the host reconnects and calls ResumeHost).
+            if (HostGames.TryGetValue(hostToken, out var owned))
             {
-                if (Rooms.TryRemove(code, out var room))
+                foreach (var code in owned.Keys)
                 {
-                    await Clients.Group(code).SendAsync("GameAborted", "The host disconnected.");
-                    foreach (var p in room.Players) ConnectionRooms.TryRemove(p.ConnectionId, out _);
+                    if (Rooms.TryGetValue(code, out var room)) room.HostConnectionId = null;
                 }
             }
         }
@@ -400,7 +458,7 @@ public class BattleshipHub : Hub
             if (proom.Players.All(p => !p.Connected))
             {
                 Rooms.TryRemove(pcode, out _);
-                RemoveFromHostGames(proom.HostConnectionId ?? "", pcode);
+                RemoveFromHostGames(proom.HostToken, pcode);
             }
         }
 
@@ -427,7 +485,7 @@ public class BattleshipHub : Hub
         if (room.Players.Count == 0)
         {
             Rooms.TryRemove(code, out _);
-            RemoveFromHostGames(room.HostConnectionId ?? "", code);
+            RemoveFromHostGames(room.HostToken, code);
         }
         else
         {
@@ -535,6 +593,7 @@ public class BattleshipHub : Hub
     {
         public string Code { get; }
         public string? HostConnectionId { get; set; }
+        public string HostToken { get; set; } = "";
         public bool ShootAgainOnHit { get; set; }
         public List<Player> Players { get; } = new();
         public bool Started { get; set; }

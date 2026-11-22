@@ -37,7 +37,44 @@
   let gameOver = false;
   let shootAgainOnHit = false;
 
+  // Reconnect/pause countdown (opponent dropped — count down the grace window).
+  let pauseTimer = null;       // setInterval handle
+  let pauseDeadline = 0;       // epoch ms when the grace window expires
+  let pausedName = '';         // who we're waiting on
+
   const tokenKey = `bs_token_${room}`;
+
+  // ----- Pause countdown -----
+  function clearPauseCountdown() {
+    if (pauseTimer) { clearInterval(pauseTimer); pauseTimer = null; }
+    pausedName = '';
+  }
+
+  function startPauseCountdown(name, graceSeconds) {
+    clearPauseCountdown();
+    pausedName = name || 'Opponent';
+    pauseDeadline = Date.now() + Math.max(0, graceSeconds) * 1000;
+    renderPauseBanner();
+    pauseTimer = setInterval(() => {
+      if (Date.now() >= pauseDeadline) {
+        clearPauseCountdown();
+        turnBanner.textContent = `${pausedName} didn't return — ending…`;
+        turnBanner.className = 'banner wait';
+        return;
+      }
+      renderPauseBanner();
+    }, 1000);
+  }
+
+  function renderPauseBanner() {
+    const left = Math.max(0, pauseDeadline - Date.now());
+    const s = Math.ceil(left / 1000);
+    const mm = Math.floor(s / 60);
+    const ss = String(s % 60).padStart(2, '0');
+    const pretty = mm > 0 ? `${mm}:${ss}` : `${s}s`;
+    turnBanner.textContent = `⏸ ${pausedName} disconnected — ${pretty} to reconnect…`;
+    turnBanner.className = 'banner wait';
+  }
 
   // ----- Helpers -----
   function toast(msg) {
@@ -60,6 +97,7 @@
   function handleGameEnd(reason) {
     gameOver = true;
     myTurn = false;
+    clearPauseCountdown();
     toast(reason);
     turnBanner.textContent = reason;
     turnBanner.className = 'banner wait';
@@ -124,11 +162,25 @@
     frame.appendChild(gridEl);
   }
 
+  // Keep-alive tuning so idle games don't silently time out. The server's default
+  // keep-alive is 15s; we allow a generous client timeout so a phone that briefly
+  // sleeps/backgrounds isn't dropped before it can reconnect.
+  const KEEP_ALIVE_MS = 15 * 1000;
+  const SERVER_TIMEOUT_MS = 60 * 1000;
+
   // ===== Connection =====
   async function connect() {
     connection = new signalR.HubConnectionBuilder()
-      .withUrl('/hub/battleship')
-      .withAutomaticReconnect()
+      .withUrl('/hub/battleship', {
+        keepAliveIntervalInMilliseconds: KEEP_ALIVE_MS,
+        serverTimeoutInMilliseconds: SERVER_TIMEOUT_MS,
+      })
+      .withAutomaticReconnect({
+        // Retry forever with a capped backoff, so we never give up while the
+        // server holds our seat (grace window is 30 min).
+        nextRetryDelayInMilliseconds: (ctx) =>
+          Math.min(1000 * Math.pow(2, Math.min(ctx.previousRetryCount, 5)), 30000),
+      })
       .build();
 
     connection.on('GameJoined', (code, id, spec, token, saoh) => {
@@ -179,6 +231,7 @@
     });
 
     connection.on('TurnChanged', (turnId, keepTurn) => {
+      clearPauseCountdown();  // play resumed
       myTurn = turnId === myId;
       updateTurnBanner();
       if (myTurn && !gameOver) SFX.play('turn');
@@ -188,6 +241,7 @@
     connection.on('GameOver', (winner) => {
       gameOver = true;
       myTurn = false;
+      clearPauseCountdown();
       enemyGrid.classList.add('disabled');
       const win = winner === myId;
       turnBanner.textContent = win ? '🏆 You sank the enemy fleet — you win!' : '💀 Your fleet was destroyed.';
@@ -198,17 +252,24 @@
 
     connection.on('PauseState', (paused) => {
       if (paused) {
-        turnBanner.textContent = '⏸ Paused — reconnecting…';
-        turnBanner.className = 'banner wait';
+        // If we don't yet know the name/countdown, show a generic pause; the
+        // OpponentDisconnected event (sent alongside) will upgrade to a countdown.
+        if (!pauseTimer) {
+          turnBanner.textContent = '⏸ Paused — opponent reconnecting…';
+          turnBanner.className = 'banner wait';
+        }
       } else {
+        clearPauseCountdown();
         updateTurnBanner();
       }
     });
 
     connection.on('OpponentDisconnected', (name, secs) => {
       log(`${name} disconnected — waiting up to ${secs}s for them to return.`);
+      startPauseCountdown(name, secs);
     });
     connection.on('OpponentLeft', () => {
+      clearPauseCountdown();
       turnBanner.textContent = 'Opponent left the game.';
       turnBanner.className = 'banner wait';
       log('Opponent left.');
@@ -221,6 +282,7 @@
       shootAgainOnHit = !!saoh;
       gameOver = false;
       myTurn = false;
+      clearPauseCountdown();
       own = {};
       Object.keys(enemyShots).forEach(k => delete enemyShots[k]);
       battlePanel.classList.add('hidden');
@@ -250,6 +312,25 @@
     connection.onreconnected(async () => {
       const token = localStorage.getItem(tokenKey);
       if (token) await tryReconnect(token);
+    });
+
+    // If automatic reconnect has fully given up (or the socket closed), keep trying
+    // to re-establish so an idle/backgrounded player can always come back within the
+    // grace window instead of being dropped and timing out.
+    connection.onclose(async () => {
+      const token = localStorage.getItem(tokenKey);
+      if (!token || gameOver) return;
+      let delay = 1000;
+      while (connection.state === signalR.HubConnectionState.Disconnected && !gameOver) {
+        try {
+          await new Promise(r => setTimeout(r, delay));
+          await connection.start();
+          await tryReconnect(token);
+          break;
+        } catch (e) {
+          delay = Math.min(delay * 2, 30000);
+        }
+      }
     });
 
     await connection.start();

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Battleship — Play</title>
+  <link rel="stylesheet" href="/css/site.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>⚓ Battleship</h1>
+
+    <!-- Join screen -->
+    <div id="joinPanel" class="panel">
+      <h2>Join game</h2>
+      <div class="row">
+        <input id="nameInput" type="text" placeholder="Your name" maxlength="20" />
+        <button id="joinBtn">Join</button>
+      </div>
+    </div>
+
+    <!-- Placement screen -->
+    <div id="placePanel" class="panel hidden">
+      <h2>Place your fleet</h2>
+      <p class="muted">Tap a ship to rotate, then tap a cell to place. Click a placed ship to remove it.</p>
+      <div class="ship-list" id="shipList"></div>
+      <div class="board-block" style="margin:0 auto">
+        <div class="grid" id="placeGrid"></div>
+        <div class="cell-label">Your waters</div>
+      </div>
+      <div class="row" style="justify-content:center;margin-top:16px">
+        <button id="readyBtn" disabled>Ready</button>
+      </div>
+    </div>
+
+    <!-- Battle screen -->
+    <div id="battlePanel" class="hidden">
+      <div id="turnBanner" class="banner wait">Waiting…</div>
+      <div class="boards">
+        <div class="board-block">
+          <h3>Enemy waters</h3>
+          <div class="grid enemy disabled" id="enemyGrid"></div>
+          <div class="cell-label">Fire here</div>
+        </div>
+        <div class="board-block">
+          <h3>Your fleet</h3>
+          <div class="grid" id="ownGrid"></div>
+          <div class="cell-label">Incoming fire</div>
+        </div>
+      </div>
+      <div class="panel" style="margin-top:20px">
+        <h3>Battle log</h3>
+        <div class="log" id="feed"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <button id="muteBtn" class="mute-btn" title="Toggle sound">🔊</button>
+
+  <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
+  <script src="/js/sfx.js"></script>
+  <script src="/js/player.js"></script>
+</body>
+</html>
+
+

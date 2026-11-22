@@ -1,0 +1,438 @@
+:root {
+  --bg: #0b1d2a;
+  --bg2: #0f2a3d;
+  --panel: #122f45;
+  --water: #1c4a63;
+  --water2: #205875;
+  --grid: #2c6c8c;
+  --accent: #38bdf8;
+  --hit: #ef4444;
+  --miss: #64748b;
+  --ship: #475569;
+  --ship-hit: #b91c1c;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --good: #22c55e;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: radial-gradient(circle at 50% -20%, var(--bg2), var(--bg) 60%);
+  color: var(--text);
+  min-height: 100vh;
+  padding: 20px;
+}
+
+h1, h2, h3 { margin: 0 0 12px; }
+h1 { font-size: 1.9rem; letter-spacing: 1px; }
+
+.container { max-width: 900px; margin: 0 auto; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid #1e4a67;
+  border-radius: 14px;
+  padding: 20px;
+  margin-bottom: 18px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+}
+
+button {
+  background: var(--accent);
+  color: #062a3d;
+  border: none;
+  border-radius: 9px;
+  padding: 10px 18px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform .08s ease, filter .15s ease;
+}
+button:hover { filter: brightness(1.08); }
+button:active { transform: translateY(1px); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.secondary { background: #234a63; color: var(--text); }
+
+input[type="text"] {
+  background: #0a2233;
+  border: 1px solid #295a78;
+  color: var(--text);
+  border-radius: 9px;
+  padding: 10px 12px;
+  font-size: 1rem;
+  width: 100%;
+  max-width: 320px;
+}
+
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.muted { color: var(--muted); }
+.hidden { display: none !important; }
+
+/* Lobby */
+.qr-wrap { display: flex; gap: 24px; flex-wrap: wrap; align-items: center; }
+.qr-wrap img {
+  background: #fff;
+  padding: 10px;
+  border-radius: 12px;
+  width: 220px;
+  height: 220px;
+  image-rendering: pixelated;
+}
+.room-code {
+  font-size: 2.2rem;
+  font-weight: 800;
+  letter-spacing: 6px;
+  color: var(--accent);
+}
+.join-link { word-break: break-all; color: var(--muted); font-size: .9rem; }
+
+.player-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: #0a2233; border: 1px solid #295a78;
+  border-radius: 999px; padding: 8px 16px; margin: 4px 6px 0 0;
+}
+.player-chip.ready { border-color: var(--good); }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.dot.ready { background: var(--good); }
+
+/* Boards */
+.boards { display: flex; gap: 28px; flex-wrap: wrap; justify-content: center; }
+.board-block { text-align: center; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 3px;
+  background: var(--grid);
+  padding: 6px;
+  border-radius: 10px;
+  user-select: none;
+}
+
+.cell {
+  width: 32px; height: 32px;
+  background: var(--water);
+  border-radius: 5px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.1rem; font-weight: 800;
+  transition: background .1s ease;
+}
+.cell.drop-target { background: var(--water2); outline: 2px solid var(--accent); }
+.cell.ship { background: var(--ship); }
+.cell.ship-hit { background: var(--ship-hit); }
+.cell.hit { background: var(--hit); color: #fff; }
+.cell.miss { background: #0a2233; color: var(--miss); }
+.grid.enemy .cell:hover { background: var(--water2); cursor: crosshair; }
+.grid.enemy.disabled .cell:hover { cursor: default; }
+
+.cell-label { color: var(--muted); font-size: .75rem; margin-top: 6px; }
+
+.log {
+  max-height: 160px; overflow-y: auto;
+  background: #0a2233; border-radius: 10px; padding: 10px 14px;
+  font-size: .9rem;
+}
+.log div { padding: 2px 0; border-bottom: 1px dashed #123246; }
+.log div:last-child { border-bottom: none; }
+
+.banner {
+  padding: 14px 18px; border-radius: 10px; font-weight: 700; margin-bottom: 16px;
+  text-align: center;
+}
+.banner.turn { background: #0e3a2a; border: 1px solid var(--good); }
+.banner.wait { background: #3a2e0e; border: 1px solid #d97706; }
+.banner.win { background: #0e2a3a; border: 1px solid var(--accent); }
+
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: #ef4444; color: #fff; padding: 12px 22px; border-radius: 10px;
+  font-weight: 600; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 100;
+}
+.toast.show { opacity: 1; }
+
+.ship-list { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-bottom: 14px; }
+.ship-item {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--ship); padding: 6px 12px; border-radius: 8px; font-size: .85rem;
+  cursor: grab; color: #0b1d2a; font-weight: 700;
+  transition: transform .06s ease, filter .12s ease;
+}
+/* Tint each chip with its ship's color (set by .ship-<name> on the element). */
+.ship-item[class*="ship-"] { background: var(--ship-color, var(--ship)); }
+.ship-item.vertical { filter: brightness(0.85); }
+.ship-item.placed { opacity: .4; cursor: default; }
+.ship-item:hover:not(.placed) { filter: brightness(1.08); }
+
+/* Small color swatch shown on each ship chip to match the board hull color. */
+.ship-swatch {
+  width: 12px; height: 12px; border-radius: 3px;
+  background: var(--ship-color, var(--ship));
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.35);
+  flex: 0 0 auto;
+}
+
+/* Toggle switch */
+.toggle {
+  display: inline-flex; align-items: center; gap: 10px;
+  margin-top: 16px; cursor: pointer; user-select: none; font-size: .95rem;
+}
+.toggle input { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; }
+
+/* ---- Battle polish: animations ---- */
+@keyframes splash {
+  0%   { transform: scale(0.3); opacity: 0.9; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+@keyframes explode {
+  0%   { box-shadow: 0 0 0 0 rgba(239,68,68,0.9); transform: scale(1); }
+  40%  { box-shadow: 0 0 0 8px rgba(239,68,68,0.35); transform: scale(1.18); }
+  100% { box-shadow: 0 0 0 14px rgba(239,68,68,0); transform: scale(1); }
+}
+@keyframes shake {
+  0%,100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(3px); }
+}
+@keyframes popIn {
+  0%   { transform: scale(0.3); opacity: 0; }
+  70%  { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); }
+}
+@keyframes sinkReveal {
+  from { background: var(--ship-hit); }
+  to   { background: #7f1d1d; }
+}
+@keyframes pulseGlow {
+  0%,100% { box-shadow: 0 0 0 0 rgba(56,189,248,0.0); }
+  50%     { box-shadow: 0 0 12px 2px rgba(56,189,248,0.55); }
+}
+@keyframes floatUp {
+  0%   { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(-46px); opacity: 0; }
+}
+@keyframes victoryPulse {
+  0%,100% { transform: scale(1); }
+  50%     { transform: scale(1.04); }
+}
+
+.cell { position: relative; overflow: visible; }
+.cell .marker { display: inline-block; line-height: 1; animation: popIn .25s ease-out; }
+.cell.hit, .cell.ship-hit { animation: explode .45s ease-out; }
+.cell.miss .marker { animation: popIn .2s ease-out; }
+.cell.just-sunk { animation: sinkReveal .6s ease forwards, shake .4s ease; }
+.grid.shake { animation: shake .4s ease; }
+.banner.turn { animation: pulseGlow 1.8s ease-in-out infinite; }
+.banner.win { animation: victoryPulse 1s ease-in-out infinite; }
+
+/* White splash overlay on a miss */
+.impact {
+  position: absolute; inset: 0; border-radius: 5px; pointer-events: none;
+  background: radial-gradient(circle, rgba(255,255,255,0.85), rgba(255,255,255,0) 70%);
+  animation: splash .5s ease-out forwards;
+}
+
+/* Floating combat text (HIT / MISS / SUNK!) */
+.float-text {
+  position: fixed; font-weight: 800; font-size: 1.15rem;
+  pointer-events: none; z-index: 200;
+  text-shadow: 0 2px 6px rgba(0,0,0,.6);
+  animation: floatUp 0.9s ease-out forwards;
+}
+
+/* Mute toggle */
+.mute-btn {
+  position: fixed; top: 14px; right: 14px; z-index: 150;
+  background: #123246; color: var(--text); font-size: 1.1rem;
+  width: 44px; height: 44px; border-radius: 50%; padding: 0;
+}
+
+/* ---- Admin dashboard: multiple concurrent games ---- */
+.container.wide { max-width: 1200px; }
+
+.games-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 18px;
+}
+
+.game-card {
+  background: var(--panel);
+  border: 1px solid #1e4a67;
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+.game-card-head {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+}
+
+.room-code.sm { font-size: 1.5rem; letter-spacing: 4px; }
+
+.status-pill {
+  font-size: .75rem; font-weight: 700; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid #295a78; color: var(--muted); background: #0a2233;
+}
+.status-pill.live { color: #062a3d; background: var(--accent); border-color: var(--accent); }
+.status-pill.done { color: #052e16; background: var(--good); border-color: var(--good); }
+
+.qr-wrap.sm { gap: 14px; }
+.qr-wrap.sm img { width: 120px; height: 120px; padding: 6px; }
+.game-meta { min-width: 0; }
+
+.players { display: flex; flex-wrap: wrap; gap: 6px; }
+.players .player-chip { padding: 6px 12px; font-size: .85rem; margin: 0; }
+.player-chip.offline { opacity: .55; border-style: dashed; }
+
+.log.mini { max-height: 90px; font-size: .8rem; padding: 8px 10px; }
+
+.card-actions { margin-top: auto; }
+
+button.danger { background: #b91c1c; color: #fff; }
+button.danger:hover { filter: brightness(1.1); }
+
+/* ================================================================== */
+/* Graphical ship hulls on the OWNER board                            */
+/* Cells of the same ship fuse together via directional box-shadows    */
+/* that fill the 3px grid gap; the true ends get rounded caps.         */
+/* ================================================================== */
+:root {
+  --hull: #6b7c8f;          /* default hull steel */
+  --hull-edge: #8da2b8;     /* highlight edge */
+  --hull-hit: #8b1f1f;      /* damaged hull */
+  --gap: 3px;               /* must match .grid gap */
+}
+
+/* Base hull piece: fills the cell and hides the water beneath. */
+.cell.ship {
+  position: relative;
+  background: transparent;
+  z-index: 1;
+}
+.cell.ship::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 3px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.35), rgba(255,255,255,0.05) 45%, rgba(0,0,0,0.12)),
+    var(--ship-color, var(--hull));
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.30);
+  z-index: -1;
+}
+
+/* Bridge the gap toward connected neighbours by extending the hull 3px. */
+.cell.ship.conn-e { box-shadow: var(--gap) 0 0 0 var(--ship-color, var(--hull)); }
+.cell.ship.conn-w { box-shadow: calc(-1 * var(--gap)) 0 0 0 var(--ship-color, var(--hull)); }
+.cell.ship.conn-s { box-shadow: 0 var(--gap) 0 0 var(--ship-color, var(--hull)); }
+.cell.ship.conn-n { box-shadow: 0 calc(-1 * var(--gap)) 0 0 var(--ship-color, var(--hull)); }
+/* Two-direction corners (L-bends are impossible in Battleship, but be safe). */
+.cell.ship.conn-e.conn-w { box-shadow: var(--gap) 0 0 0 var(--ship-color,var(--hull)), calc(-1 * var(--gap)) 0 0 0 var(--ship-color,var(--hull)); }
+.cell.ship.conn-s.conn-n { box-shadow: 0 var(--gap) 0 0 var(--ship-color,var(--hull)), 0 calc(-1 * var(--gap)) 0 0 var(--ship-color,var(--hull)); }
+
+/* Round the free ends of the hull. Because we can't tell bow from stern without
+   direction data, both free ends get symmetrical rounded caps, which reads as a
+   ship hull rather than a row of blocks. */
+.cell.ship.ship-bow::before,
+.cell.ship.ship-stern::before { border-radius: 8px; }
+.cell.ship.ship-bow.conn-e::before { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
+/* leave the connected side square so the hull flows into the next piece */
+.cell.ship.ship-bow.conn-e::before,
+.cell.ship.ship-stern.conn-e::before { border-top-right-radius: 1px; border-bottom-right-radius: 1px; }
+.cell.ship.ship-bow.conn-w::before,
+.cell.ship.ship-stern.conn-w::before { border-top-left-radius: 1px; border-bottom-left-radius: 1px; }
+.cell.ship.ship-bow.conn-s::before,
+.cell.ship.ship-stern.conn-s::before { border-bottom-left-radius: 1px; border-bottom-right-radius: 1px; }
+.cell.ship.ship-bow.conn-n::before,
+.cell.ship.ship-stern.conn-n::before { border-top-left-radius: 1px; border-top-right-radius: 1px; }
+
+/* A little deck detail down the middle of a hull piece. */
+.cell.ship.ship-mid::after,
+.cell.ship.ship-bow::after,
+.cell.ship.ship-stern::after {
+  content: "";
+  position: absolute;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.18);
+  z-index: -1;
+}
+.cell.ship.orient-h::after { left: 2px; right: 2px; top: 45%; height: 10%; }
+.cell.ship.orient-v::after { top: 2px; bottom: 2px; left: 45%; width: 10%; }
+
+/* Per-ship color identities — five clearly distinct, high-contrast hues so each
+   ship stands out against the blue water and from the other ships. Defined on the
+   bare .ship-<name> class so both board cells AND the placement chips pick them up. */
+.ship-carrier    { --ship-color: #f59e0b; }  /* amber */
+.ship-battleship { --ship-color: #22c55e; }  /* green */
+.ship-cruiser    { --ship-color: #a855f7; }  /* violet */
+.ship-submarine  { --ship-color: #06b6d4; }  /* cyan */
+.ship-destroyer  { --ship-color: #ec4899; }  /* pink */
+
+/* Damaged hull: a hit cell turns the hull red. */
+.cell.ship.ship-hit::before {
+  background:
+    repeating-linear-gradient(135deg, rgba(0,0,0,0.18) 0 4px, rgba(0,0,0,0.05) 4px 8px),
+    var(--hull-hit);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.35);
+}
+.cell.ship-hit.conn-e { box-shadow: var(--gap) 0 0 0 var(--hull-hit); }
+.cell.ship-hit.conn-w { box-shadow: calc(-1 * var(--gap)) 0 0 0 var(--hull-hit); }
+.cell.ship-hit.conn-s { box-shadow: 0 var(--gap) 0 0 var(--hull-hit); }
+.cell.ship-hit.conn-n { box-shadow: 0 calc(-1 * var(--gap)) 0 0 var(--hull-hit); }
+.cell.ship-hit.conn-e.conn-w { box-shadow: var(--gap) 0 0 0 var(--hull-hit), calc(-1 * var(--gap)) 0 0 0 var(--hull-hit); }
+.cell.ship-hit.conn-s.conn-n { box-shadow: 0 var(--gap) 0 0 var(--hull-hit), 0 calc(-1 * var(--gap)) 0 0 var(--hull-hit); }
+
+/* ================================================================== */
+/* Battle boards frame: A–J row labels and 1–10 column labels          */
+/* Matches the grid's 32px cells, 3px gaps and 6px padding so every    */
+/* label sits directly over/next to its row or column.                 */
+/* ================================================================== */
+:root { --bx-cell: 32px; --bx-gap: 3px; --bx-pad: 6px; }
+
+.board-frame {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  align-items: end;
+}
+
+.board-corner { grid-column: 1; grid-row: 1; }
+
+/* Column numbers (1–10) across the top, aligned to grid columns. */
+.board-cols {
+  grid-column: 2; grid-row: 1;
+  display: grid;
+  grid-template-columns: repeat(10, var(--bx-cell));
+  column-gap: var(--bx-gap);
+  padding: 0 var(--bx-pad);
+  margin-bottom: 4px;
+}
+.board-cols span {
+  display: flex; align-items: center; justify-content: center;
+  height: 16px;
+  font-size: .72rem; font-weight: 700; color: var(--muted);
+}
+
+/* Row letters (A–J) down the left, aligned to grid rows. */
+.board-rows {
+  grid-column: 1; grid-row: 2;
+  display: grid;
+  grid-template-rows: repeat(10, var(--bx-cell));
+  row-gap: var(--bx-gap);
+  padding: var(--bx-pad) 0;
+  margin-right: 4px;
+}
+.board-rows span {
+  display: flex; align-items: center; justify-content: center;
+  width: 16px;
+  font-size: .72rem; font-weight: 700; color: var(--muted);
+}
+
+/* The grid occupies the bottom-right slot of the frame. */
+.board-frame > .grid { grid-column: 2; grid-row: 2; }

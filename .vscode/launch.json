@@ -1,0 +1,53 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch Battleship (Debug)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/src/GpBattleshipWebapp/bin/Debug/net10.0/GpBattleshipWebapp.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/src/GpBattleshipWebapp",
+      "stopAtEntry": false,
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "\\bNow listening on:\\s+(https?://\\S+)",
+        "uriFormat": "%s"
+      },
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:5184"
+      },
+      "sourceFileMap": {
+        "/Views": "${workspaceFolder}/src/GpBattleshipWebapp/Views"
+      }
+    },
+    {
+      "name": "Launch Battleship (Watch / hot reload)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "watch",
+      "program": "${workspaceFolder}/src/GpBattleshipWebapp/bin/Debug/net10.0/GpBattleshipWebapp.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/src/GpBattleshipWebapp",
+      "stopAtEntry": false,
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "\\bNow listening on:\\s+(https?://\\S+)",
+        "uriFormat": "%s"
+      },
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:5184"
+      }
+    },
+    {
+      "name": "Attach to Process",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickProcess}"
+    }
+  ],
+  "compounds": []
+}

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Battleship — Admin</title>
+  <link rel="stylesheet" href="/css/site.css" />
+</head>
+<body>
+  <div class="container wide">
+    <h1>⚓ Battleship — Admin Console</h1>
+    <p class="muted">Run as many games as you like at once. Each game has its own QR code and two seats.</p>
+
+    <!-- Create controls -->
+    <div id="startPanel" class="panel">
+      <div class="row">
+        <input id="hostName" type="text" placeholder="Your name (host)" maxlength="20" />
+        <label class="toggle">
+          <input id="shootAgain" type="checkbox" />
+          <span>Hit = shoot again</span>
+        </label>
+        <button id="createBtn">➕ Create Game</button>
+      </div>
+    </div>
+
+    <!-- Active games dashboard -->
+    <div id="games" class="games-grid"></div>
+    <p id="emptyHint" class="muted" style="text-align:center">No active games yet — click “Create Game”.</p>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
+  <script src="/js/host.js"></script>
+</body>
+</html>

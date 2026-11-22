@@ -2,7 +2,11 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Launch Battleship (Debug)",
+      // F5 → pick an environment → runs with variables.<env>.env loaded.
+      // The env file is the SINGLE source of truth: it supplies
+      //   ConnectionStrings__DefaultConnection, Auth__* secrets,
+      //   ASPNETCORE_ENVIRONMENT and ASPNETCORE_URLS.
+      "name": "Launch Battleship",
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
@@ -10,20 +14,18 @@
       "args": [],
       "cwd": "${workspaceFolder}/src/GpBattleshipWebapp",
       "stopAtEntry": false,
+      "envFile": "${workspaceFolder}/variables.${input:environment}.env",
       "serverReadyAction": {
         "action": "openExternally",
         "pattern": "\\bNow listening on:\\s+(https?://\\S+)",
         "uriFormat": "%s"
-      },
-      "env": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "ASPNETCORE_URLS": "http://localhost:5184"
       },
       "sourceFileMap": {
         "/Views": "${workspaceFolder}/src/GpBattleshipWebapp/Views"
       }
     },
     {
+      // Same environment picker, but with hot reload (dotnet watch).
       "name": "Launch Battleship (Watch / hot reload)",
       "type": "coreclr",
       "request": "launch",
@@ -32,14 +34,11 @@
       "args": [],
       "cwd": "${workspaceFolder}/src/GpBattleshipWebapp",
       "stopAtEntry": false,
+      "envFile": "${workspaceFolder}/variables.${input:environment}.env",
       "serverReadyAction": {
         "action": "openExternally",
         "pattern": "\\bNow listening on:\\s+(https?://\\S+)",
         "uriFormat": "%s"
-      },
-      "env": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "ASPNETCORE_URLS": "http://localhost:5184"
       }
     },
     {
@@ -49,5 +48,19 @@
       "processId": "${command:pickProcess}"
     }
   ],
-  "compounds": []
+  "compounds": [],
+  "inputs": [
+    {
+      "id": "environment",
+      "description": "Select Environment",
+      "type": "pickString",
+      "options": [
+        "Development",
+        "QA",
+        "Production",
+        "Development.local"
+      ],
+      "default": "Development.local"
+    }
+  ]
 }

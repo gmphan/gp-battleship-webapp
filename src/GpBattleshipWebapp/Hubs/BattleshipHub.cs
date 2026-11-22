@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 
 namespace GpBattleshipWebapp.Hubs;
@@ -15,17 +17,22 @@ namespace GpBattleshipWebapp.Hubs;
 /// window and paused, and a client presenting the token re-claims the seat.
 ///
 /// All state is in-memory, so this is intended to run as a single container instance.
+///
+/// AUTH: Players connect anonymously (they scan a QR to play). The HOST/admin methods
+/// (CreateGame, ListGames, ResumeHost, AbortGame, NewGame) require an authenticated
+/// admin session ([Authorize]); host identity is the authenticated username taken
+/// from the auth cookie, NOT a client-supplied token. So a host can only manage games
+/// it owns, and an anonymous connection can't create or abort games.
 /// </summary>
 public class BattleshipHub : Hub
 {
     private static readonly ConcurrentDictionary<string, GameRoom> Rooms = new();
     // Player connection -> room code (a player is in at most one room).
     private static readonly ConcurrentDictionary<string, string> ConnectionRooms = new();
-    // STABLE host token -> set of room codes it owns (a host may own many).
-    // Keyed by token, NOT the ephemeral connection id, so a host survives reconnects.
+    // STABLE host identity (authenticated username) -> set of room codes it owns.
+    // Keyed by username (from the auth cookie), NOT a client token or connection id,
+    // so a host survives reconnects/reloads and can only manage its own games.
     private static readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> HostGames = new();
-    // Current host connection -> its stable host token (rebuilt on reconnect).
-    private static readonly ConcurrentDictionary<string, string> ConnectionHostToken = new();
 
     private const int BoardSize = 10;
     // How long a disconnected player's seat is held before removal. Generous so a
@@ -48,13 +55,18 @@ public class BattleshipHub : Hub
 
     /// <summary>
     /// Host creates a new room. <paramref name="shootAgainOnHit"/> controls the turn rule.
-    /// A host may call this repeatedly to run several games at once.
-    /// <paramref name="hostToken"/> is a stable client-persisted token so the host's
-    /// rooms survive reconnects/reloads (empty on very first use → one is generated).
+    /// A host may call this repeatedly to run several games at once. Requires login;
+    /// the host identity is the authenticated username (cookie), never a client token.
     /// </summary>
-    public async Task CreateGame(string hostName, bool shootAgainOnHit, string? hostToken = null)
+    [Authorize]
+    public async Task CreateGame(string hostName, bool shootAgainOnHit)
     {
-        var token = string.IsNullOrWhiteSpace(hostToken) ? Guid.NewGuid().ToString("N") : hostToken!;
+        var token = CurrentHostToken();
+        if (token == null)
+        {
+            await Clients.Caller.SendAsync("Error", "You must be signed in to create a game.");
+            return;
+        }
 
         var code = GenerateRoomCode();
         var room = new GameRoom(code)
@@ -65,28 +77,26 @@ public class BattleshipHub : Hub
         };
         Rooms[code] = room;
 
-        // Track this room under the host's STABLE token and remember which token
-        // this connection currently represents (so reconnects can re-bind).
+        // Track this room under the host's authenticated identity.
         var owned = HostGames.GetOrAdd(token, _ => new ConcurrentDictionary<string, byte>());
         owned[code] = 0;
-        ConnectionHostToken[Context.ConnectionId] = token;
 
         await Groups.AddToGroupAsync(Context.ConnectionId, code);
         await Clients.Caller.SendAsync("GameCreated", code, Context.ConnectionId, FleetSpec, shootAgainOnHit, token);
     }
 
     /// <summary>
-    /// Host re-claims its dashboard after a reconnect/reload by presenting its stable
-    /// token. Re-binds every owned room to the new connection id and re-joins those
-    /// groups, then replies with the list of owned games.
+    /// Host re-claims its dashboard after a reconnect/reload. The owner is derived
+    /// from the authenticated session, so this just re-binds owned rooms to the
+    /// current connection and replies with the list.
     /// </summary>
-    public async Task ResumeHost(string hostToken)
+    [Authorize]
+    public async Task ResumeHost()
     {
-        if (string.IsNullOrWhiteSpace(hostToken)) { await ListGamesForToken(null); return; }
+        var token = CurrentHostToken();
+        if (token == null) { await ListGamesForToken(null); return; }
 
-        ConnectionHostToken[Context.ConnectionId] = hostToken;
-
-        if (HostGames.TryGetValue(hostToken, out var owned))
+        if (HostGames.TryGetValue(token, out var owned))
         {
             foreach (var code in owned.Keys)
             {
@@ -99,10 +109,11 @@ public class BattleshipHub : Hub
             }
         }
 
-        await ListGamesForToken(hostToken);
+        await ListGamesForToken(token);
     }
 
-    /// <summary>Returns all games owned by the calling host (for dashboard restore).</summary>
+    /// <summary>Returns all games owned by the calling (authenticated) host.</summary>
+    [Authorize]
     public async Task ListGames() => await ListGamesForToken(this.CurrentHostToken());
 
     private async Task ListGamesForToken(string? token)
@@ -205,11 +216,17 @@ public class BattleshipHub : Hub
 
     // ----- Host controls -----
 
-    /// <summary>The stable host token for the current connection, or null if not a host.</summary>
-    private string? CurrentHostToken() =>
-        ConnectionHostToken.TryGetValue(Context.ConnectionId, out var t) ? t : null;
+    /// <summary>The authenticated host identity (username) for this connection, or null if anonymous.</summary>
+    private string? CurrentHostToken()
+    {
+        var name = Context.User?.Identity?.IsAuthenticated == true
+            ? Context.User.Identity.Name
+            : null;
+        return string.IsNullOrWhiteSpace(name) ? null : name.Trim().ToLowerInvariant();
+    }
 
     /// <summary>Host aborts and removes one of their games.</summary>
+    [Authorize]
     public async Task AbortGame(string code)
     {
         code = (code ?? "").Trim().ToUpperInvariant();
@@ -240,6 +257,7 @@ public class BattleshipHub : Hub
     }
 
     /// <summary>Host resets one of their games back to the lobby for a rematch (same room, same QR).</summary>
+    [Authorize]
     public async Task NewGame(string code)
     {
         code = (code ?? "").Trim().ToUpperInvariant();
@@ -419,19 +437,15 @@ public class BattleshipHub : Hub
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         // 1) Host disconnecting: do NOT tear the rooms down. The host owns its rooms
-        //    via a stable token; it can resume them with ResumeHost() after a
-        //    reconnect/reload. We only drop the ephemeral connection→token mapping
-        //    here so a fresh connection can re-bind its token.
-        if (ConnectionHostToken.TryRemove(Context.ConnectionId, out var hostToken))
+        //    via its authenticated identity and can resume them (ResumeHost) after a
+        //    reconnect/reload. Mark its rooms as having no live host connection so
+        //    host-targeted updates pause until the host returns.
+        var hostToken = CurrentHostToken();
+        if (hostToken != null && HostGames.TryGetValue(hostToken, out var ownedRooms))
         {
-            // Mark owned rooms as having no live host connection (players keep playing;
-            // host updates will resume once the host reconnects and calls ResumeHost).
-            if (HostGames.TryGetValue(hostToken, out var owned))
+            foreach (var code in ownedRooms.Keys)
             {
-                foreach (var code in owned.Keys)
-                {
-                    if (Rooms.TryGetValue(code, out var room)) room.HostConnectionId = null;
-                }
+                if (Rooms.TryGetValue(code, out var ownedRoom)) ownedRoom.HostConnectionId = null;
             }
         }
 

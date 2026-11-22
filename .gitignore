@@ -64,6 +64,16 @@ yarn-error.log*
 docker-compose.override.yml
 
 # ---------------------------------------------------------------------------
+# Secrets / environment files  (NEVER commit these)
+# ---------------------------------------------------------------------------
+# Any .env anywhere (e.g. stack/.env)
+*.env
+# Your named env files: variables.env, variables.Development.local.env,
+# variables.Production.env, etc.
+variables*.env
+variables*.local.env
+*.local.env
+# ---------------------------------------------------------------------------
 # Scratch / temporary files
 # ---------------------------------------------------------------------------
 tmp/
@@ -72,7 +82,6 @@ tmp/
 *.bak
 *.swp
 *~
-
 # ---------------------------------------------------------------------------
 # OS cruft
 # ---------------------------------------------------------------------------
@@ -88,3 +97,4 @@ Desktop.ini
 .idea/
 *.iml
 .history/
+

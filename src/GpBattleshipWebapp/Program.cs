@@ -1,4 +1,7 @@
+using GpBattleshipWebapp.Data;
+using GpBattleshipWebapp.Endpoints;
 using GpBattleshipWebapp.Hubs;
+using GpBattleshipWebapp.Injectors;
 using Microsoft.AspNetCore.HttpOverrides;
 using QRCoder;
 
@@ -16,7 +19,8 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.KnownProxies.Clear();
 });
 
-builder.Services.AddSignalR();
+// Discover and run all IInjector implementations (DbInjector, AuthInjector, SignalRInjector).
+builder.Services.InjectServicesFromAssemblies(builder.Configuration);
 
 // Public base URL used to build the QR join link, e.g. https://battleship.example.com
 // Configure via appsettings or the PUBLIC_BASE_URL environment variable.
@@ -25,7 +29,19 @@ builder.Services.AddSingleton(new PublicUrlOptions(publicBaseUrl));
 
 var app = builder.Build();
 
+// Startup: apply EF migrations (creates the schema on first run).
+await StartupTasks.InitializeAsync(app);
+
 app.UseForwardedHeaders();
+
+// Enforce HTTPS. Behind Cloudflare the request arrives as HTTP with
+// X-Forwarded-Proto=https, so proxied requests are unaffected but direct hits are protected.
+app.UseHttpsRedirection();
+
+// Authentication/authorization middleware (cookie auth via AuthInjector).
+app.UseAuthentication();
+app.UseAuthorization();
+
 app.UseDefaultFiles();
 // Serve mutable app assets (HTML/JS/CSS) with no-cache + revalidation so a new
 // deploy is picked up immediately instead of being served stale from the browser
@@ -41,13 +57,11 @@ app.UseStaticFiles(new StaticFileOptions
         if (ext is "html" or "js" or "css" or "json")
         {
             headers.CacheControl = "no-cache, must-revalidate";
-            // Tell Cloudflare not to edge-cache these mutable files.
             headers["CDN-Cache-Control"] = "no-store";
             headers["Cloudflare-CDN-Cache-Control"] = "no-store";
         }
         else
         {
-            // Images/fonts are stable; let them be cached for a while.
             headers.CacheControl = "public, max-age=86400";
         }
     }
@@ -60,12 +74,8 @@ app.MapGet("/api/qr/{code}", (string code, HttpRequest request, PublicUrlOptions
 {
     code = (code ?? "").Trim().ToUpperInvariant();
     if (code.Length == 0 || code.Length > 12)
-    {
         return Results.BadRequest("Invalid room code.");
-    }
 
-    // Prefer the configured public URL (correct behind the tunnel); otherwise
-    // fall back to the request's own scheme/host.
     var baseUrl = !string.IsNullOrWhiteSpace(opts.PublicBaseUrl)
         ? opts.PublicBaseUrl.TrimEnd('/')
         : $"{request.Scheme}://{request.Host}";
@@ -80,14 +90,15 @@ app.MapGet("/api/qr/{code}", (string code, HttpRequest request, PublicUrlOptions
 });
 
 app.MapGet("/api/config", (PublicUrlOptions opts) =>
-{
-    // Expose the public base URL so the admin page can display the join link.
-    return Results.Ok(new { publicBaseUrl = opts.PublicBaseUrl });
-});
+    Results.Ok(new { publicBaseUrl = opts.PublicBaseUrl }));
 
+// Auth (login/logout/me) + SuperAdmin-only admin management.
+app.MapAuthEndpoints();
+app.MapAdminEndpoints();
+
+// The hub supports BOTH anonymous players (QR scan) and authenticated hosts.
 app.MapHub<BattleshipHub>("/hub/battleship");
 
 app.Run();
 
 public sealed record PublicUrlOptions(string PublicBaseUrl);
-

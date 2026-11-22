@@ -7,12 +7,49 @@
   <link rel="stylesheet" href="/css/site.css" />
 </head>
 <body>
+  <!-- Login gate (shown until authenticated) -->
+  <div id="loginOverlay" class="login-overlay hidden">
+    <form id="loginForm" class="login-card">
+      <h1>⚓ Admin Sign In</h1>
+      <input id="loginUser" type="text" placeholder="Username" autocomplete="username" maxlength="64" />
+      <input id="loginPass" type="password" placeholder="Password" autocomplete="current-password" />
+      <button id="loginBtn" type="submit">Sign In</button>
+      <p id="loginError" class="login-error"></p>
+    </form>
+  </div>
+
   <div class="container wide">
-    <h1>⚓ Battleship — Admin Console</h1>
+    <div class="app-head">
+      <h1>⚓ Battleship — Admin Console</h1>
+      <div id="whoami" class="whoami hidden">
+        <span id="whoamiName" class="whoami-name"></span>
+        <select id="roleSwitch" class="hidden"></select>
+        <button id="logoutBtn" class="secondary small">Log out</button>
+      </div>
+    </div>
     <p class="muted">Run as many games as you like at once. Each game has its own QR code and two seats.</p>
 
+    <!-- SuperAdmin-only: manage admins -->
+    <section id="adminsPanel" class="panel hidden">
+      <div class="row panel-head">
+        <h2>👥 Admins</h2>
+        <button id="addAdminToggle" class="secondary small">➕ Add admin</button>
+      </div>
+      <form id="addAdminForm" class="row hidden">
+        <input id="newAdminUser" type="text" placeholder="Username" maxlength="64" />
+        <input id="newAdminPass" type="password" placeholder="Password (min 8)" />
+        <select id="newAdminRole">
+          <option value="Admin">Admin</option>
+          <option value="SuperAdmin">SuperAdmin</option>
+        </select>
+        <button id="createAdminBtn" type="submit">Create</button>
+        <span id="addAdminError" class="login-error"></span>
+      </form>
+      <div id="adminsList" class="admins-list"></div>
+    </section>
+
     <!-- Create controls -->
-    <div id="startPanel" class="panel">
+    <div id="startPanel" class="panel hidden">
       <div class="row">
         <input id="hostName" type="text" placeholder="Your name (host)" maxlength="20" />
         <label class="toggle">
@@ -31,6 +68,7 @@
   <div id="toast" class="toast"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
+  <script src="/js/auth.js"></script>
   <script src="/js/host.js"></script>
 </body>
 </html>

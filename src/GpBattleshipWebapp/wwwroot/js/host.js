@@ -1,9 +1,10 @@
 /* Admin console logic for Battleship over SignalR.
- * Runs MANY concurrent games from one connection. Each game is a dashboard
- * card with its own QR, room code, live player list, status, and controls
- * (Abort / New Game).
+ * Requires an authenticated admin (cookie session via /api/auth/login).
+ * A SuperAdmin additionally sees the "Admins" panel to manage admin accounts.
+ * Runs MANY concurrent games from one connection; each game is a dashboard card.
  */
 (() => {
+  // ---- elements ----
   const startPanel = document.getElementById('startPanel');
   const gamesEl = document.getElementById('games');
   const emptyHint = document.getElementById('emptyHint');
@@ -12,35 +13,29 @@
   const shootAgainInput = document.getElementById('shootAgain');
   const toastEl = document.getElementById('toast');
 
+  const loginOverlay = document.getElementById('loginOverlay');
+  const loginForm = document.getElementById('loginForm');
+  const loginUser = document.getElementById('loginUser');
+  const loginPass = document.getElementById('loginPass');
+  const loginBtn = document.getElementById('loginBtn');
+  const loginError = document.getElementById('loginError');
+
+  const whoami = document.getElementById('whoami');
+  const whoamiName = document.getElementById('whoamiName');
+  const logoutBtn = document.getElementById('logoutBtn');
+
+  const adminsPanel = document.getElementById('adminsPanel');
+  const adminsList = document.getElementById('adminsList');
+  const addAdminToggle = document.getElementById('addAdminToggle');
+  const addAdminForm = document.getElementById('addAdminForm');
+  const newAdminUser = document.getElementById('newAdminUser');
+  const newAdminPass = document.getElementById('newAdminPass');
+  const newAdminRole = document.getElementById('newAdminRole');
+  const addAdminError = document.getElementById('addAdminError');
+
   let connection = null;
   let publicBaseUrl = '';
-
-  // Stable token so the host's games survive reconnects/reloads (server keys
-  // host-owned rooms by this token, not the ephemeral connection id).
-  // NOTE: crypto.randomUUID() only exists in secure contexts (https/localhost).
-  // Over plain http://LAN_IP it's undefined, so fall back to a safe random id.
-  const HOST_TOKEN_KEY = 'bs_host_token';
-  function randomToken() {
-    if (window.crypto && typeof crypto.randomUUID === 'function') {
-      return crypto.randomUUID().replace(/-/g, '');
-    }
-    if (window.crypto && crypto.getRandomValues) {
-      const a = new Uint8Array(16);
-      crypto.getRandomValues(a);
-      return Array.from(a, b => b.toString(16).padStart(2, '0')).join('');
-    }
-    return Date.now().toString(16) + Math.random().toString(16).slice(2);
-  }
-  function getHostToken() {
-    try {
-      let t = localStorage.getItem(HOST_TOKEN_KEY);
-      if (!t) { t = randomToken(); localStorage.setItem(HOST_TOKEN_KEY, t); }
-      return t;
-    } catch {
-      return randomToken(); // localStorage blocked → ephemeral token this session
-    }
-  }
-  const hostToken = getHostToken();
+  let connected = false;
 
   // code -> { code, shootAgainOnHit, started, players: [] }
   const games = new Map();
@@ -54,12 +49,177 @@
     toast._t = setTimeout(() => toastEl.classList.remove('show'), 3200);
   }
 
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
   async function loadConfig() {
     try {
       const res = await fetch('/api/config');
       const cfg = await res.json();
       publicBaseUrl = (cfg.publicBaseUrl || '').replace(/\/$/, '');
     } catch { /* ignore */ }
+  }
+
+  // ===== Auth bootstrap =====
+
+  function showLogin(msg) {
+    loginOverlay.classList.remove('hidden');
+    if (msg) loginError.textContent = msg;
+    loginUser.focus();
+  }
+
+  function hideLogin() {
+    loginOverlay.classList.add('hidden');
+    loginError.textContent = '';
+  }
+
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    loginBtn.disabled = true;
+    loginError.textContent = '';
+    try {
+      await window.Auth.login(loginUser.value.trim(), loginPass.value);
+      hideLogin();
+      await afterLogin();
+    } catch (err) {
+      loginError.textContent = err.message || 'Sign in failed.';
+    } finally {
+      loginBtn.disabled = false;
+    }
+  });
+
+  logoutBtn.addEventListener('click', async () => {
+    await window.Auth.logout();
+    location.reload();
+  });
+
+  async function bootstrap() {
+    const me = await window.Auth.me();
+    if (me) {
+      hideLogin();
+      await afterLogin();
+    } else {
+      showLogin();
+    }
+  }
+
+  async function afterLogin() {
+    const user = window.Auth.user;
+    whoamiName.textContent = `${user.username} (${user.role})`;
+    whoami.classList.remove('hidden');
+    startPanel.classList.remove('hidden');
+
+    // SuperAdmin-only admin management.
+    if (window.Auth.isSuperAdmin) {
+      adminsPanel.classList.remove('hidden');
+      loadAdmins();
+    } else {
+      adminsPanel.classList.add('hidden');
+    }
+
+    await loadConfig();
+    await connect();
+  }
+
+  // ===== Admins panel (SuperAdmin only) =====
+
+  addAdminToggle.addEventListener('click', () => {
+    addAdminForm.classList.toggle('hidden');
+    addAdminError.textContent = '';
+  });
+
+  addAdminForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    addAdminError.textContent = '';
+    try {
+      const res = await fetch('/api/admins', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          username: newAdminUser.value.trim(),
+          password: newAdminPass.value,
+          role: newAdminRole.value,
+        }),
+      });
+      if (!res.ok) {
+        let m = 'Could not create admin.';
+        try { const j = await res.json(); if (j && j.error) m = j.error; } catch {}
+        throw new Error(m);
+      }
+      newAdminUser.value = ''; newAdminPass.value = '';
+      addAdminForm.classList.add('hidden');
+      await loadAdmins();
+    } catch (err) {
+      addAdminError.textContent = err.message;
+    }
+  });
+
+  async function loadAdmins() {
+    try {
+      const res = await fetch('/api/admins', { credentials: 'same-origin' });
+      if (!res.ok) return;
+      const list = await res.json();
+      renderAdmins(list);
+    } catch { /* ignore */ }
+  }
+
+  function renderAdmins(list) {
+    adminsList.innerHTML = '';
+    list.forEach(a => {
+      const row = document.createElement('div');
+      row.className = 'admin-row';
+      const badge = a.isConfig ? '<span class="pill config">config</span>' : '<span class="pill db">db</span>';
+      row.innerHTML = `
+        <span class="admin-name">${escapeHtml(a.username)}</span>
+        <span class="pill ${a.role === 'SuperAdmin' ? 'super' : 'admin'}">${escapeHtml(a.role)}</span>
+        ${badge}
+        ${a.isActive ? '' : '<span class="pill off">disabled</span>'}
+        <span class="admin-actions"></span>
+      `;
+      const actions = row.querySelector('.admin-actions');
+      if (!a.isConfig) {
+        const roleBtn = document.createElement('button');
+        roleBtn.className = 'secondary small';
+        roleBtn.textContent = a.role === 'SuperAdmin' ? 'Make Admin' : 'Make SuperAdmin';
+        roleBtn.addEventListener('click', () => updateAdmin(a.id, { role: a.role === 'SuperAdmin' ? 'Admin' : 'SuperAdmin' }));
+        const actBtn = document.createElement('button');
+        actBtn.className = 'secondary small';
+        actBtn.textContent = a.isActive ? 'Disable' : 'Enable';
+        actBtn.addEventListener('click', () => updateAdmin(a.id, { isActive: !a.isActive }));
+        const delBtn = document.createElement('button');
+        delBtn.className = 'danger small';
+        delBtn.textContent = 'Delete';
+        delBtn.addEventListener('click', () => deleteAdmin(a.id, a.username));
+        actions.append(roleBtn, actBtn, delBtn);
+      } else {
+        actions.innerHTML = '<span class="muted small">managed in variables.env</span>';
+      }
+      adminsList.appendChild(row);
+    });
+  }
+
+  async function updateAdmin(id, patch) {
+    try {
+      const res = await fetch(`/api/admins/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) { let m = 'Update failed.'; try { const j = await res.json(); if (j&&j.error) m=j.error; } catch {} throw new Error(m); }
+      await loadAdmins();
+    } catch (err) { toast(err.message); }
+  }
+
+  async function deleteAdmin(id, name) {
+    if (!confirm(`Delete admin "${name}"? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`/api/admins/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+      if (!res.ok) { let m = 'Delete failed.'; try { const j = await res.json(); if (j&&j.error) m=j.error; } catch {} throw new Error(m); }
+      await loadAdmins();
+    } catch (err) { toast(err.message); }
   }
 
   // ===== Card rendering =====
@@ -127,7 +287,7 @@
     const started = g.started;
     refs.status.textContent = started ? 'In progress' : 'Lobby';
     refs.status.className = 'status-pill ' + (started ? 'live' : 'idle');
-    refs.newGameBtn.disabled = g.players.length < 2;
+    refs.newGameBtn.disabled = (g.players || []).length < 2;
     renderCardPlayers(refs, g.players || []);
   }
 
@@ -171,27 +331,21 @@
     emptyHint.style.display = cards.size === 0 ? 'block' : 'none';
   }
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  }
-
   // ===== Connection =====
 
   async function connect() {
+    if (connected) return;
     connection = new signalR.HubConnectionBuilder()
-      .withUrl('/hub/battleship')
+      .withUrl('/hub/battleship')          // cookie auth is sent automatically
       .withAutomaticReconnect()
       .build();
 
-    connection.on('GameCreated', (code, hostId, spec, shootAgainOnHit, token) => {
-      // Persist the token the server issued (should match ours; keep it in sync).
-      if (token) localStorage.setItem(HOST_TOKEN_KEY, token);
+    connection.on('GameCreated', (code, hostId, spec, shootAgainOnHit) => {
       games.set(code, { code, shootAgainOnHit, started: false, players: [] });
       updateCard(games.get(code));
       cardLog(code, 'Game created — waiting for players.');
     });
 
-    // Host-directed per-game updates.
     connection.on('GameUpdated', (code, started, players) => {
       const g = games.get(code) || { code };
       g.started = started;
@@ -200,9 +354,7 @@
       updateCard(g);
     });
 
-    // Shot feed across whichever games are running.
     connection.on('ShotResult', (by, x, y, hit, sunk) => {
-      // Find the game whose player list contains this shooter.
       for (const [code, g] of games) {
         if ((g.players || []).some(p => p.id === by)) {
           const cell = String.fromCharCode(65 + x) + (y + 1);
@@ -226,15 +378,12 @@
       }
     });
 
-    // AbortGame emits GameRemoved (with code) back to the host; the group-facing
-    // GameAborted is mainly for players.
     connection.on('GameRemoved', (code) => {
       if (cards.has(code)) cardLog(code, 'Game removed.');
       removeCard(code);
     });
 
     connection.on('GamesList', (list) => {
-      // Restore dashboard after a reconnect/reload.
       list.forEach(g => {
         games.set(g.code, { code: g.code, shootAgainOnHit: g.shootAgainOnHit, started: g.started, players: g.players });
         updateCard(games.get(g.code));
@@ -243,32 +392,31 @@
 
     connection.on('Error', (msg) => toast(msg));
 
-    connection.onreconnecting(() => toast('Reconnecting…'));
+    connection.onreconnecting(() => { connected = false; toast('Reconnecting…'); });
     connection.onreconnected(async () => {
+      connected = true;
       toast('Reconnected.');
       await resumeHost();
     });
 
     await connection.start();
-    // On first connect, resume any rooms this browser previously owned.
+    connected = true;
     await resumeHost();
   }
 
-  // Re-claim ownership of our rooms (re-binds them to the new connection).
-  // Tolerates an older server that lacks ResumeHost — fall back to ListGames
-  // so the dashboard still restores instead of breaking the whole connect.
+  // Re-claim ownership of our rooms (owner derives from the logged-in session).
   async function resumeHost() {
     try {
-      await connection.invoke('ResumeHost', hostToken);
+      await connection.invoke('ResumeHost');
     } catch (err) {
-      console.warn('ResumeHost unavailable, trying ListGames:', err);
+      console.warn('ResumeHost failed, trying ListGames:', err);
       try { await connection.invoke('ListGames'); } catch { /* ignore */ }
     }
   }
 
   async function invokeSafe(method, ...args) {
     try {
-      if (!connection) { await loadConfig(); await connect(); }
+      if (!connected) { await connect(); }
       await connection.invoke(method, ...args);
     } catch (err) {
       console.error(err);
@@ -278,25 +426,11 @@
 
   // ===== Create button =====
 
-  let started = false;
-  async function ensureConnected() {
-    if (started) return;
-    await loadConfig();
-    await connect();
-    started = true;
-  }
-
   createBtn.addEventListener('click', async () => {
     createBtn.disabled = true;
     try {
-      await ensureConnected();
-      try {
-        await connection.invoke('CreateGame', hostNameInput.value || 'Host', shootAgainInput.checked, hostToken);
-      } catch (err) {
-        // Older server may not accept the 3rd arg → retry with the classic 2-arg form.
-        console.warn('CreateGame(3 args) failed, retrying legacy signature:', err);
-        await connection.invoke('CreateGame', hostNameInput.value || 'Host', shootAgainInput.checked);
-      }
+      if (!connected) { await connect(); }
+      await connection.invoke('CreateGame', hostNameInput.value || 'Host', shootAgainInput.checked);
     } catch (err) {
       console.error('Could not create game:', err);
       toast('Could not create game: ' + (err && err.message ? err.message : err));
@@ -305,6 +439,6 @@
     }
   });
 
-  // Re-sync after reload if the same connection somehow persists (rare); safe no-op.
-  window.addEventListener('beforeunload', () => { /* sockets close; host rooms are cleaned server-side */ });
+  // ===== Start =====
+  bootstrap();
 })();

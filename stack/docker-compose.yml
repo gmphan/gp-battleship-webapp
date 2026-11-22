@@ -1,0 +1,36 @@
+services:
+  battleship:
+    # Runs the prebuilt image pushed by build-and-publish.sh (on your dev machine).
+    # The OptiPlex has no source/Dockerfile — it just pulls this image and runs it.
+    image: ghcr.io/gmphan/gp-battleship-webapp:latest
+    container_name: gp-battleship
+    restart: unless-stopped
+    pull_policy: always
+    ports:
+      # Host 8082 -> container 8080. The Cloudflare Tunnel targets http://localhost:8082.
+      # (8080=signage, 8081=gmphan_webapp, 80=cloudflared, 5432=postgres, 9001/9443=portainer)
+      - "8082:8080"
+    # Load secrets/config from your env file (gitignored). This is the ONLY env
+    # file used on the server. Compose also uses it for ${...} interpolation.
+    # Run from the repo root:  docker compose -f stack/docker-compose.yml up -d
+    env_file:
+      - ./variables.env
+    environment:
+      # Non-secret defaults. PUBLIC_BASE_URL only sets the QR/join host.
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://battleship.giangmichaelphan.com}"
+      ASPNETCORE_ENVIRONMENT: "${ASPNETCORE_ENVIRONMENT:-Production}"
+      # IMPORTANT: the app must listen on 8080 inside the container (mapped above as
+      # host 8082 -> container 8080). Your variables.env sets ASPNETCORE_URLS to :80;
+      # we override to :8080 here so the port mapping & Cloudflare tunnel target work.
+      ASPNETCORE_URLS: "http://+:8080"
+
+# Note: the following keys are read by the app and should be present in your
+# (gitignored) variables.env — they pass straight through env_file, no need to
+# repeat them here:
+#   ConnectionStrings__DefaultConnection=Host=...;Port=5432;Database=gp_battleship;Username=...;Password=...
+#   Auth__InitialAdmin__Password=...            # seed SuperAdmin password
+#   Auth__InitialAdmin__Username=...            # (optional; defaults to "SuperAdmin")
+#   Auth__SeedAdmins__0__Username=...           # (optional) extra config admins
+#   Auth__SeedAdmins__0__Password=...
+#   Auth__SeedAdmins__0__Role=Admin
+

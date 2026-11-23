@@ -17,7 +17,7 @@ services:
       - ./variables.env
     environment:
       # Non-secret defaults. PUBLIC_BASE_URL only sets the QR/join host.
-      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://battleship.giangmichaelphan.com}"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://battleship.ocbuu.com}"
       ASPNETCORE_ENVIRONMENT: "${ASPNETCORE_ENVIRONMENT:-Production}"
       # IMPORTANT: the app must listen on 8080 inside the container (mapped above as
       # host 8082 -> container 8080). Your variables.env sets ASPNETCORE_URLS to :80;

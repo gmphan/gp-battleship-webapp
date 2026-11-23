@@ -202,7 +202,7 @@ docker compose up -d
 - `stack/docker-compose.yml` is **pull-only** (`image:` + `pull_policy: always`, no `build:`). Run it from the repo root with `docker compose -f stack/docker-compose.yml up -d`. Host port **8082 → container 8080** (`8080`/`8081` are already used on this server: `8080`=signage, `8081`=gmphan_webapp, `80`=cloudflared, `5432`=postgres, `9001/9443`=portainer).
 - The container listens on `8080` internally (`ASPNETCORE_URLS=http://+:8080`), runs as the non-root `app` user.
 - Designed to sit behind a **Cloudflare Tunnel**/reverse proxy. Point the tunnel's public hostname at **`http://localhost:8082`**. `Program.cs` enables `ForwardedHeaders` (`X-Forwarded-For/Proto/Host`) and clears known networks/proxies so the tunnel is trusted.
-- **`PUBLIC_BASE_URL`** (in `docker-compose.yml` environment) MUST be set to your real public HTTPS origin (e.g. `https://battleship.giangmichaelphan.com`). It's used to build the QR/join link so phones hit the tunnel, not `localhost`.
+- **`PUBLIC_BASE_URL`** (in `docker-compose.yml` environment) MUST be set to your real public HTTPS origin (e.g. `https://battleship.ocbuu.com`). It's used to build the QR/join link so phones hit the tunnel, not `localhost`.
 - If the GHCR package is **private**, log in on the server once: `echo $CR_PAT | docker login ghcr.io -u gmphan --password-stdin`. To avoid auth entirely, set the package to **Public** in GitHub → Packages → Package settings.
 
 ---
